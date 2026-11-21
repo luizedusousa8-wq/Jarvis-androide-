@@ -1,0 +1,196 @@
+name: Construir APK do JARVIS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Gerar projeto Android
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/jarvis/assistant
+          cat > settings.gradle <<'GRADLE'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = 'JarvisAndroid'
+          include ':app'
+          GRADLE
+          cat > build.gradle <<'GRADLE'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+              id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
+          }
+          GRADLE
+          echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8' > gradle.properties
+          cat > app/build.gradle <<'GRADLE'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.jarvis.assistant'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'com.jarvis.assistant'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          GRADLE
+          cat > app/src/main/AndroidManifest.xml <<'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <application android:theme="@android:style/Theme.Material.NoActionBar" android:label="JARVIS">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+          cat > app/src/main/java/com/jarvis/assistant/MainActivity.kt <<'KOTLIN'
+          package com.jarvis.assistant
+
+          import android.Manifest
+          import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.speech.RecognizerIntent
+          import android.speech.SpeechRecognizer
+          import android.speech.tts.TextToSpeech
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+
+          class MainActivity : Activity(), TextToSpeech.OnInitListener {
+              private lateinit var display: TextView
+              private lateinit var voice: TextToSpeech
+              private val micRequest = 41
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.statusBarColor = Color.rgb(3, 10, 20)
+                  window.navigationBarColor = Color.rgb(3, 10, 20)
+                  voice = TextToSpeech(this, this)
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(26, 40, 26, 30)
+                      setBackgroundColor(Color.rgb(3, 10, 20))
+                  }
+                  val heading = TextView(this).apply {
+                      text = "J.A.R.V.I.S.\nASSISTENTE PESSOAL"
+                      textSize = 25f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.rgb(0, 220, 255))
+                  }
+                  display = TextView(this).apply {
+                      text = "Sistema iniciado.\nAguardando instruções, senhor."
+                      textSize = 18f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      setPadding(10, 55, 10, 55)
+                  }
+                  val talk = Button(this).apply {
+                      text = "🎙 FALAR COM JARVIS"
+                      setOnClickListener { listen() }
+                  }
+                  val clock = Button(this).apply {
+                      text = "HORÁRIO"
+                      setOnClickListener { answer("Agora são " + SimpleDateFormat("HH:mm", Locale("pt", "BR")).format(Date())) }
+                  }
+                  root.addView(heading)
+                  root.addView(display, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                  root.addView(talk, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                  root.addView(clock, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                  setContentView(root)
+              }
+
+              override fun onInit(status: Int) {
+                  if (status == TextToSpeech.SUCCESS) voice.language = Locale("pt", "BR")
+              }
+
+              private fun listen() {
+                  if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), micRequest)
+                      return
+                  }
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      answer("Reconhecimento de voz indisponível neste aparelho.")
+                      return
+                  }
+                  val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
+                      putExtra(RecognizerIntent.EXTRA_PROMPT, "Diga seu comando")
+                  }
+                  try { startActivityForResult(intent, 42) } catch (_: Exception) { answer("Não consegui abrir o reconhecimento de voz.") }
+              }
+
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, results)
+                  if (requestCode == micRequest && results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED) listen()
+              }
+
+              @Deprecated("Compatibilidade com reconhecimento de voz")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == 42 && resultCode == RESULT_OK) {
+                      val words = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() ?: return
+                      val c = words.lowercase(Locale("pt", "BR"))
+                      val result = when {
+                          "oi" in c || "olá" in c || "ola" in c -> "Olá, senhor. Sistemas operacionais."
+                          "seu nome" in c || "quem é você" in c -> "Sou JARVIS, seu assistente pessoal."
+                          "hora" in c || "horário" in c -> "Agora são " + SimpleDateFormat("HH:mm", Locale("pt", "BR")).format(Date())
+                          "data" in c -> "Hoje é " + SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")).format(Date())
+                          "ajuda" in c -> "Posso informar hora e data, responder saudações e executar comandos locais básicos."
+                          "obrigado" in c -> "Sempre à disposição, senhor."
+                          else -> "Comando recebido. Ainda não tenho uma resposta local para isso."
+                      }
+                      answer(result)
+                  }
+              }
+
+              private fun answer(message: String) {
+                  display.text = "JARVIS\n\n$message"
+                  if (::voice.isInitialized) voice.speak(message, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+              }
+
+              override fun onDestroy() {
+                  if (::voice.isInitialized) { voice.stop(); voice.shutdown() }
+                  super.onDestroy()
+              }
+          }
+          KOTLIN
+      - name: Compilar APK
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.9'
+          arguments: assembleDebug
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
